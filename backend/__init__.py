@@ -1,0 +1,3 @@
+"""
+BarrierefreiCheck Backend Package
+""" 
