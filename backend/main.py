@@ -927,10 +927,10 @@ async def get_payment_status(session_id: str):
         
     try:
         logger.info(f"Rufe Payment-Status für Session-ID ab: {session_id}")
-        session = await stripe_service.get_checkout_session(session_id)
+        session = stripe_service.get_checkout_session(session_id)
         
         # Holen der PaymentIntent, um den Status zu prüfen
-        payment_intent = await stripe_service.get_payment_intent(session.payment_intent)
+        payment_intent = stripe_service.get_payment_intent(session.payment_intent)
         
         is_paid = payment_intent.status == 'succeeded'
         

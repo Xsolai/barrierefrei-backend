@@ -23,7 +23,7 @@ class StripeService:
         
         logger.info("Stripe Service initialisiert")
     
-    async def create_checkout_session(
+    def create_checkout_session(
         self, 
         plan_id: str,
         price_amount: int,  # in Cent
@@ -144,11 +144,11 @@ class StripeService:
             logger.error(f"Unerwarteter Fehler bei Checkout Session: {str(e)}")
             raise
     
-    async def get_checkout_session(self, session_id: str) -> Dict[str, Any]:
+    def get_checkout_session(self, session_id: str) -> Dict[str, Any]:
         """Holt Details einer Checkout Session, inklusive Payment Intent"""
         try:
             logger.info(f"Rufe Session {session_id} von Stripe ab mit expandiertem Payment Intent")
-            session = await stripe.checkout.Session.retrieve(
+            session = stripe.checkout.Session.retrieve(
                 session_id,
                 expand=["payment_intent"]
             )
@@ -157,10 +157,10 @@ class StripeService:
             logger.error(f"Fehler beim Abrufen der Session {session_id}: {str(e)}")
             raise Exception(f"Stripe Session nicht gefunden: {str(e)}")
 
-    async def get_payment_intent(self, payment_intent_id: str) -> Dict[str, Any]:
+    def get_payment_intent(self, payment_intent_id: str) -> Dict[str, Any]:
         """Holt einen Payment Intent"""
         try:
-            payment_intent = await stripe.PaymentIntent.retrieve(payment_intent_id)
+            payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
             return payment_intent
         except stripe.error.StripeError as e:
             logger.error(f"Fehler beim Abrufen des Payment Intent {payment_intent_id}: {str(e)}")
