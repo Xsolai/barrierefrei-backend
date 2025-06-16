@@ -19,40 +19,54 @@ class SupabaseService:
             self.client = None
             return
         
-        # Vereinfachte Initialisierung - funktioniert mit allen Versionen
+        # Robuste Initialisierung mit mehreren Fallback-Strategien
+        self.client = None
+        
+        # Strategie 1: Standard-Import und -Initialisierung
         try:
-            # Standard-Aufruf - funktioniert mit den meisten Versionen
+            from supabase import create_client, Client
             self.client: Client = create_client(supabase_url, supabase_key)
-            logger.info("✅ Supabase-Service erfolgreich initialisiert")
-            
-        except TypeError as e:
-            # Wenn der Standard-Aufruf mit TypeError fehlschlägt (meist wegen neuer/alter Versionen)
-            error_msg = str(e).lower()
-            logger.warning(f"⚠️ Supabase-Client TypeError: {str(e)}")
-            
-            if "proxy" in error_msg or "unexpected keyword" in error_msg:
-                # Dies ist wahrscheinlich ein Versions-Konflikt
-                try:
-                    # Minimaler Fallback ohne zusätzliche Parameter
-                    logger.info("🔄 Versuche vereinfachte Supabase-Initialisierung...")
-                    
-                    # Importiere direkt und versuche verschiedene Ansätze
-                    from supabase import create_client as supabase_create
-                    self.client = supabase_create(supabase_url, supabase_key)
-                    logger.info("✅ Supabase-Service mit vereinfachtem Fallback initialisiert")
-                    
-                except Exception as fallback_error:
-                    logger.error(f"❌ Auch vereinfachter Fallback fehlgeschlagen: {str(fallback_error)}")
-                    logger.warning("🔄 Wechsle zu Offline-Modus - Jobs werden nur lokal verwaltet")
-                    self.client = None
-            else:
-                logger.error(f"❌ Unbekannter Supabase-Initialisierungsfehler: {str(e)}")
-                self.client = None
-                
+            logger.info("✅ Supabase-Service erfolgreich initialisiert (Standard-Methode)")
+            return
         except Exception as e:
-            logger.error(f"❌ Allgemeiner Supabase-Fehler: {str(e)}")
-            logger.warning("🔄 Wechsle zu Offline-Modus")
-            self.client = None
+            logger.warning(f"⚠️ Standard-Initialisierung fehlgeschlagen: {str(e)}")
+        
+        # Strategie 2: Minimale Initialisierung ohne zusätzliche Parameter
+        try:
+            from supabase import create_client
+            # Versuche mit minimalen Parametern
+            self.client = create_client(supabase_url, supabase_key)
+            logger.info("✅ Supabase-Service erfolgreich initialisiert (Minimale Methode)")
+            return
+        except Exception as e:
+            logger.warning(f"⚠️ Minimale Initialisierung fehlgeschlagen: {str(e)}")
+        
+        # Strategie 3: Alternative Import-Methode
+        try:
+            import supabase
+            self.client = supabase.create_client(supabase_url, supabase_key)
+            logger.info("✅ Supabase-Service erfolgreich initialisiert (Alternative Import)")
+            return
+        except Exception as e:
+            logger.warning(f"⚠️ Alternative Import fehlgeschlagen: {str(e)}")
+        
+        # Strategie 4: Direkte Client-Erstellung
+        try:
+            from supabase.client import Client
+            from supabase.lib.client_options import ClientOptions
+            
+            # Erstelle Client mit minimalen Optionen
+            options = ClientOptions()
+            self.client = Client(supabase_url, supabase_key, options)
+            logger.info("✅ Supabase-Service erfolgreich initialisiert (Direkte Client-Erstellung)")
+            return
+        except Exception as e:
+            logger.warning(f"⚠️ Direkte Client-Erstellung fehlgeschlagen: {str(e)}")
+        
+        # Alle Strategien fehlgeschlagen
+        logger.error("❌ Alle Supabase-Initialisierungsstrategien fehlgeschlagen")
+        logger.warning("🔄 Wechsle zu Offline-Modus - Jobs werden nur lokal verwaltet")
+        self.client = None
 
     def create_analysis_job(self, url: str, plan: str, user_id: str = None, payment_session_id: str = None) -> str:
         """
