@@ -1,0 +1,31 @@
+{
+  "url": "https://example.com",
+  "description": "Einfache HTML-Seite mit Basis-Struktur",
+  "test_timestamp": "2025-06-12T11:36:24.685670",
+  "num_runs": 3,
+  "areas_tested": {
+    "1_1_textalternativen": {
+      "error": "Keine erfolgreichen Runs",
+      "wcag_area": "1_1_textalternativen",
+      "url": "https://example.com"
+    },
+    "1_3_anpassbare_darstellung": {
+      "error": "Keine erfolgreichen Runs",
+      "wcag_area": "1_3_anpassbare_darstellung",
+      "url": "https://example.com"
+    },
+    "2_4_navigation": {
+      "error": "Keine erfolgreichen Runs",
+      "wcag_area": "2_4_navigation",
+      "url": "https://example.com"
+    }
+  },
+  "overall_consistency": {
+    "consistency_rate": 0,
+    "in_expected_range_rate": 0,
+    "overall_rating": "UNACCEPTABLE",
+    "num_areas_tested": 3,
+    "num_consistent": 0,
+    "num_in_range": 0
+  }
+}

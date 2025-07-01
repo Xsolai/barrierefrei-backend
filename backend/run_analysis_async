@@ -1,0 +1,83 @@
+import logging
+from datetime import datetime
+import traceback
+
+logger = logging.getLogger(__name__)
+
+async def run_analysis_async(job_id: str, request: AnalysisRequest):
+    """
+    Führt die Analyse asynchron aus und aktualisiert den Status in Supabase.
+    """
+    try:
+        # Importiere die vollständige Analyse
+        from run_complete_analysis import CompleteWCAGAnalyzer
+        
+        # Prüfe ob Job in running_analyses existiert, falls nicht, initialisiere ihn
+        if job_id not in running_analyses:
+            logger.warning(f"Job {job_id} nicht in running_analyses gefunden - initialisiere ihn")
+            running_analyses[job_id] = {
+                "status": "running",
+                "progress": 0,
+                "message": "Analyse initialisiert...",
+                "started_at": datetime.now().isoformat(),
+                "url": request.url,
+                "plan": request.plan,
+                "user_id": getattr(request, 'user_id', None)
+            }
+        
+        # Update Status
+        running_analyses[job_id]["progress"] = 10
+        running_analyses[job_id]["message"] = "Initialisiere Analyzer..."
+        
+        # Erstelle Analyzer-Instanz mit Supabase Job-ID
+        analyzer = CompleteWCAGAnalyzer(supabase_job_id=job_id)
+        
+        # Führe vollständige Analyse durch
+        logger.info(f"Job {job_id}: Starte umfangreiche WCAG-Analyse...")
+        running_analyses[job_id]["progress"] = 20
+        running_analyses[job_id]["message"] = "Crawle Website..."
+        
+        analysis_results = analyzer.run_complete_analysis(
+            request.url, 
+            max_pages=request.max_pages or 5
+        )
+        
+        if "error" in analysis_results:
+            logger.error(f"Job {job_id}: Analyse fehlgeschlagen: {analysis_results['error']}")
+            running_analyses[job_id]["status"] = "failed"
+            running_analyses[job_id]["error"] = analysis_results['error']
+            return
+        
+        logger.info(f"Job {job_id}: Analyse erfolgreich abgeschlossen")
+        
+        # Bereite die Antwort vor
+        response = {
+            "status": "success",
+            "url": request.url,
+            "timestamp": analysis_results["meta"]["timestamp"],
+            "crawl_info": analysis_results["crawling"],
+            "accessibility_check": analysis_results["accessibility_check"],
+            "ai_analyses": analysis_results["ai_analyses"],
+            "summary": analysis_results["summary"],
+            "token_usage": analysis_results["token_usage"],
+            "message": "Vollständige WCAG-Analyse mit Expert-Prompts abgeschlossen"
+        }
+        
+        # Update Status auf completed
+        running_analyses[job_id]["status"] = "completed"
+        running_analyses[job_id]["progress"] = 100
+        running_analyses[job_id]["message"] = "Analyse abgeschlossen"
+        running_analyses[job_id]["result"] = response
+        running_analyses[job_id]["completed_at"] = datetime.now().isoformat()
+        
+    except Exception as e:
+        logger.error(f"Job {job_id}: Unerwarteter Fehler: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Prüfe erneut ob Job existiert, bevor Update
+        if job_id in running_analyses:
+            running_analyses[job_id]["status"] = "failed"
+            running_analyses[job_id]["error"] = str(e)
+            running_analyses[job_id]["message"] = "Fehler bei der Analyse"
+        else:
+            logger.error(f"Job {job_id} kann nicht aktualisiert werden - nicht in running_analyses gefunden") 
