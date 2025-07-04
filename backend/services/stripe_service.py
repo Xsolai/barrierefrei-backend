@@ -18,8 +18,8 @@ class StripeService:
         stripe.api_key = stripe_key
         self.webhook_secret = os.getenv('STRIPE_WEBHOOK_SECRET')
         
-        # Frontend URL für Redirects
-        self.frontend_url = os.getenv('FRONTEND_URL', 'https://inclusa.de')
+        # Frontend URL für Redirects - verwende lokale Entwicklung als Fallback
+        self.frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
         
         logger.info("Stripe Service initialisiert")
     
@@ -108,6 +108,42 @@ class StripeService:
                 })
                 
                 logger.info(f"Certificate: Netto €{net_amount/100}, MwSt €{vat_amount/100}, Gesamt €{price_amount/100}")
+                
+            elif plan_id == 'professional_fix':
+                # Spezielle Behandlung für Professionelle Website-Überarbeitung
+                net_amount = int((price_amount / 1.19))  # Netto-Betrag
+                vat_amount = price_amount - net_amount   # MwSt-Betrag
+                
+                # Hole Upgrade-Details für bessere Beschreibung
+                page_count = upgrade_details.get('detected_pages', 1) if upgrade_details else 1
+                
+                # Netto Line Item für professionelle Überarbeitung
+                line_items.append({
+                    'price_data': {
+                        'currency': currency,
+                        'product_data': {
+                            'name': 'Professionelle Website-Überarbeitung (netto)',
+                            'description': f'Vollständige Code-Überarbeitung durch zertifizierten Barrierefreiheitsexperten für {url} ({page_count} Seiten)',
+                        },
+                        'unit_amount': net_amount,
+                    },
+                    'quantity': 1,
+                })
+                
+                # MwSt Line Item für professionelle Überarbeitung
+                line_items.append({
+                    'price_data': {
+                        'currency': currency,
+                        'product_data': {
+                            'name': '19% Mehrwertsteuer',
+                            'description': 'Gesetzliche Mehrwertsteuer auf Professionelle Website-Überarbeitung',
+                        },
+                        'unit_amount': vat_amount,
+                    },
+                    'quantity': 1,
+                })
+                
+                logger.info(f"Professional Fix: Netto €{net_amount/100}, MwSt €{vat_amount/100}, Gesamt €{price_amount/100} ({page_count} Seiten)")
                 
             else:
                 # Standard WCAG-Analyse (basic/enterprise)

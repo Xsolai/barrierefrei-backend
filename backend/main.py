@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 from services.stripe_service import StripeService
 from contextlib import asynccontextmanager
+import config
 
 # Logging-Konfiguration
 logging.basicConfig(
@@ -64,17 +65,14 @@ app = FastAPI(title="BarrierefreiCheck API", lifespan=lifespan)
 # CORS-Konfiguration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://inclusa.de",
-        "https://www.inclusa.de", 
+        allow_origins=[
+        config.FRONTEND_URL,      # Primäre Frontend URL aus ENV
+        config.BACKEND_URL,       # Backend URL aus ENV  
         "http://localhost:3000",  # Für lokale Entwicklung
         "http://localhost:3001",  # Für lokale Entwicklung (alternativer Port)
         "http://localhost:3002",  # Für lokale Entwicklung (alternativer Port)
         "http://localhost:8080",  # Für lokale Entwicklung
-        "http://18.184.65.167",   # Backend IP
-        "https://18.184.65.167",  # Backend IP (HTTPS)
-        "http://18.184.65.167:8003",  # Backend IP mit Port
-        "https://18.184.65.167:8003"  # Backend IP mit Port (HTTPS)
+        # Production URLs werden jetzt über ENV-Variablen gesteuert (FRONTEND_URL)
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -768,6 +766,289 @@ async def get_jobs(limit: int = 10, offset: int = 0, x_user_id: Optional[str] = 
             detail={"message": "Fehler beim Abrufen der Jobs", "error": str(e)}
         )
 
+@app.get("/jobs/{job_id}")
+async def get_job_details(job_id: str, x_user_id: Optional[str] = Header(None)):
+    """
+    Holt Details eines spezifischen Jobs inklusive upgrade_tasks.
+    """
+    supabase = SupabaseService()
+    if not supabase.client:
+        raise HTTPException(
+            status_code=503,
+            detail={"message": "Supabase-Service nicht verfügbar"}
+        )
+    
+    try:
+        # Hole Job-Details
+        job_response = supabase.client.table('analysis_jobs').select('*').eq('id', job_id).execute()
+        
+        if not job_response.data:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Job nicht gefunden", "job_id": job_id}
+            )
+        
+        job = job_response.data[0]
+        
+        # Prüfe User-Berechtigung falls User-ID angegeben
+        if x_user_id and job.get('user_id') != x_user_id:
+            raise HTTPException(
+                status_code=403,
+                detail={"message": "Keine Berechtigung für diesen Job"}
+            )
+        
+        # Hole upgrade_tasks für diesen Job
+        tasks_response = supabase.client.table('upgrade_tasks')\
+            .select('*')\
+            .eq('job_id', job_id)\
+            .order('created_at', desc=True)\
+            .execute()
+        
+        # Füge upgrade_tasks zum Job hinzu
+        job['upgrade_tasks'] = tasks_response.data or []
+        
+        return job
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Fehler beim Abrufen der Job-Details: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "Fehler beim Abrufen der Job-Details", "error": str(e)}
+        )
+
+# Dashboard Endpoints für Teams
+@app.get("/dashboard/certifier/tasks")
+async def get_certifier_tasks(x_user_id: Optional[str] = Header(None)):
+    """
+    Holt alle verfügbaren Certificate Tasks für das Certifier Dashboard.
+    """
+    supabase = SupabaseService()
+    if not supabase.client:
+        raise HTTPException(
+            status_code=503,
+            detail={"message": "Supabase-Service nicht verfügbar"}
+        )
+    
+    try:
+        # Hole alle Certificate upgrade_tasks mit Job- und User-Details
+        tasks_response = supabase.client.table('upgrade_tasks')\
+            .select('''
+                *,
+                analysis_jobs!inner(
+                    id,
+                    url,
+                    plan,
+                    status,
+                    created_at,
+                    user_id
+                )
+            ''')\
+            .eq('upgrade_type', 'certificate')\
+            .eq('assigned_to', 'certifier')\
+            .order('created_at', desc=False)\
+            .execute()
+        
+        # Erweitere Tasks mit User-Profil-Informationen
+        tasks = tasks_response.data or []
+        
+        for task in tasks:
+            job = task.get('analysis_jobs')
+            if job and job.get('user_id'):
+                # Hole User-Profil (optional - falls verfügbar)
+                try:
+                    profile_response = supabase.client.table('user_profiles')\
+                        .select('full_name')\
+                        .eq('user_id', job['user_id'])\
+                        .execute()
+                    
+                    if profile_response.data:
+                        task['customer_profile'] = profile_response.data[0]
+                except Exception as e:
+                    logger.warning(f"Konnte User-Profil für {job['user_id']} nicht laden: {e}")
+                    task['customer_profile'] = None
+        
+        logger.info(f"🏆 Certifier Dashboard: {len(tasks)} Certificate Tasks geladen")
+        
+        return {
+            "tasks": tasks,
+            "total_count": len(tasks),
+            "pending_count": len([t for t in tasks if t.get('status') == 'requested']),
+            "in_progress_count": len([t for t in tasks if t.get('status') == 'in_progress']),
+            "completed_count": len([t for t in tasks if t.get('status') == 'completed'])
+        }
+        
+    except Exception as e:
+        logger.error(f"Fehler beim Laden der Certifier Tasks: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "Fehler beim Laden der Certifier Tasks", "error": str(e)}
+        )
+
+@app.get("/dashboard/webdev/tasks")  
+async def get_webdev_tasks(x_user_id: Optional[str] = Header(None)):
+    """
+    Holt alle verfügbaren Professional Fix Tasks für das Webdev Dashboard.
+    """
+    supabase = SupabaseService()
+    if not supabase.client:
+        raise HTTPException(
+            status_code=503,
+            detail={"message": "Supabase-Service nicht verfügbar"}
+        )
+    
+    try:
+        # Hole alle Professional Fix upgrade_tasks mit Job- und User-Details
+        tasks_response = supabase.client.table('upgrade_tasks')\
+            .select('''
+                *,
+                analysis_jobs!inner(
+                    id,
+                    url,
+                    plan,
+                    status,
+                    created_at,
+                    user_id
+                )
+            ''')\
+            .eq('upgrade_type', 'professional_fix')\
+            .eq('assigned_to', 'webdev')\
+            .order('created_at', desc=False)\
+            .execute()
+        
+        # Erweitere Tasks mit User-Profil-Informationen
+        tasks = tasks_response.data or []
+        
+        for task in tasks:
+            job = task.get('analysis_jobs')
+            if job and job.get('user_id'):
+                # Hole User-Profil (optional - falls verfügbar)
+                try:
+                    profile_response = supabase.client.table('user_profiles')\
+                        .select('full_name')\
+                        .eq('user_id', job['user_id'])\
+                        .execute()
+                    
+                    if profile_response.data:
+                        task['customer_profile'] = profile_response.data[0]
+                except Exception as e:
+                    logger.warning(f"Konnte User-Profil für {job['user_id']} nicht laden: {e}")
+                    task['customer_profile'] = None
+        
+        logger.info(f"🔧 Webdev Dashboard: {len(tasks)} Professional Fix Tasks geladen")
+        
+        return {
+            "tasks": tasks,
+            "total_count": len(tasks),
+            "pending_count": len([t for t in tasks if t.get('status') == 'requested']),
+            "in_progress_count": len([t for t in tasks if t.get('status') == 'in_progress']),
+            "completed_count": len([t for t in tasks if t.get('status') == 'completed'])
+        }
+        
+    except Exception as e:
+        logger.error(f"Fehler beim Laden der Webdev Tasks: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "Fehler beim Laden der Webdev Tasks", "error": str(e)}
+        )
+
+# Task Management Endpoints
+@app.put("/dashboard/tasks/{task_id}/status")
+async def update_task_status(
+    task_id: str, 
+    new_status: str, 
+    notes: Optional[str] = None,
+    x_user_id: Optional[str] = Header(None)
+):
+    """
+    Aktualisiert den Status einer upgrade_task.
+    Erlaubte Status: requested, in_progress, completed, cancelled
+    """
+    supabase = SupabaseService()
+    if not supabase.client:
+        raise HTTPException(
+            status_code=503,
+            detail={"message": "Supabase-Service nicht verfügbar"}
+        )
+    
+    # Validiere Status
+    allowed_statuses = ['requested', 'in_progress', 'completed', 'cancelled']
+    if new_status not in allowed_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": f"Ungültiger Status. Erlaubt: {', '.join(allowed_statuses)}"}
+        )
+    
+    try:
+        # Hole aktuelle Task-Details
+        task_response = supabase.client.table('upgrade_tasks')\
+            .select('*, analysis_jobs!inner(id, url, user_id)')\
+            .eq('id', task_id)\
+            .execute()
+        
+        if not task_response.data:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Task nicht gefunden"}
+            )
+        
+        task = task_response.data[0]
+        
+        # Bereite Update-Daten vor
+        update_data = {
+            'status': new_status,
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        # Füge Notizen hinzu falls vorhanden
+        if notes:
+            update_data['notes'] = notes
+        
+        # Setze Timestamps basierend auf Status
+        if new_status == 'in_progress':
+            update_data['started_at'] = datetime.now().isoformat()
+            update_data['assigned_to_user_id'] = x_user_id
+        elif new_status == 'completed':
+            update_data['completed_at'] = datetime.now().isoformat()
+            if not task.get('started_at'):
+                update_data['started_at'] = datetime.now().isoformat()
+        
+        # Aktualisiere Task
+        result = supabase.client.table('upgrade_tasks')\
+            .update(update_data)\
+            .eq('id', task_id)\
+            .execute()
+        
+        if result.data:
+            logger.info(f"✅ Task {task_id} Status aktualisiert auf '{new_status}' von User {x_user_id}")
+            
+            # Bei Completion: Kunden benachrichtigen
+            if new_status == 'completed':
+                logger.info(f"🎯 Task {task_id} ({task.get('upgrade_type')}) abgeschlossen - sollte Kunde benachrichtigen")
+                # Hier könnte später E-Mail-Benachrichtigung implementiert werden
+            
+            return {
+                "success": True,
+                "task_id": task_id,
+                "new_status": new_status,
+                "message": f"Task Status erfolgreich auf '{new_status}' aktualisiert"
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail={"message": "Task konnte nicht aktualisiert werden"}
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Fehler beim Aktualisieren des Task Status: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "Fehler beim Aktualisieren des Task Status", "error": str(e)}
+        )
+
 @app.get("/download-pdf/{job_id}")
 async def download_pdf(job_id: str):
     """
@@ -920,7 +1201,6 @@ async def create_payment_session(request: PaymentRequest):
         if request.origin_url:
             # Wenn eine spezifische origin_url angegeben wurde, verwende diese
             base_url = request.origin_url.strip('/')
-            success_url = f"{base_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
             cancel_url = f"{base_url}/payment/canceled"
             logger.info(f"Verwende spezifische origin_url: {base_url}")
         else:
@@ -932,12 +1212,23 @@ async def create_payment_session(request: PaymentRequest):
                 frontend_base = frontend_base.replace('https://', 'http://')
                 logger.warning(f"⚠️ HTTPS zu HTTP korrigiert für localhost: {frontend_base}")
             
-            # Verwende Frontend-URLs für echte Weiterleitung
-            success_url = f"{frontend_base}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
+            base_url = frontend_base
             cancel_url = f"{frontend_base}/payment/canceled"
-            logger.info(f"🎯 Verwende Frontend-URLs: Success -> {success_url}, Cancel -> {cancel_url}")
+            logger.info(f"🎯 Verwende Frontend-URLs: Base -> {base_url}")
         
-        logger.info(f"Verwende Redirect URLs: Success -> {success_url}, Cancel -> {cancel_url}")
+        # Bestimme spezifische Success-URL basierend auf Plan-Typ
+        if request.plan_id == 'professional_fix':
+            success_url = f"{base_url}/payment/success/professional-fix?session_id={{CHECKOUT_SESSION_ID}}"
+            logger.info(f"🔧 Professional Fix Success-URL: {success_url}")
+        elif request.plan_id == 'certificate_only':
+            success_url = f"{base_url}/payment/success/certificate?session_id={{CHECKOUT_SESSION_ID}}"
+            logger.info(f"🏆 Certificate Success-URL: {success_url}")
+        else:
+            # Standard Analyse (basic, enterprise)
+            success_url = f"{base_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
+            logger.info(f"📊 Standard Analysis Success-URL: {success_url}")
+        
+        logger.info(f"🎯 Final URLs: Success -> {success_url}, Cancel -> {cancel_url}")
         
         # Erweiterte Metadaten für die Analyse
         metadata = {
@@ -1010,32 +1301,28 @@ async def get_payment_status(session_id: str):
         logger.info(f"Rufe Payment-Status für Session-ID ab: {session_id}")
         session = stripe_service.get_checkout_session(session_id)
         
-        # Prüfe ob Payment Intent existiert
-        if not session.payment_intent:
-            logger.warning(f"Keine PaymentIntent für Session {session_id} gefunden")
-            return {
-                "session_id": session_id,
-                "payment_status": "unknown",
-                "is_paid": False,
-                "amount": session.amount_total,
-                "currency": session.currency,
-                "metadata": session.metadata,
-                "error": "PaymentIntent nicht verfügbar"
-            }
-        
-        # Holen der PaymentIntent, um den Status zu prüfen
-        payment_intent = stripe_service.get_payment_intent(session.payment_intent)
-        
-        is_paid = payment_intent.status == 'succeeded'
+        # Prüfe Payment Status - bei manchen Payments (z.B. 100% Rabatt) gibt es keinen payment_intent
+        if session.payment_intent:
+            # Standard Payment mit PaymentIntent
+            payment_intent = stripe_service.get_payment_intent(session.payment_intent)
+            is_paid = payment_intent.status == 'succeeded'
+            payment_status = payment_intent.status
+            amount = payment_intent.amount
+        else:
+            # Kein PaymentIntent (z.B. bei 100% Rabatt) - prüfe Session Status direkt
+            is_paid = session.payment_status == 'paid' and session.status == 'complete'
+            payment_status = session.payment_status
+            amount = session.amount_total
+            logger.info(f"Kein PaymentIntent für Session {session_id} - verwende Session Status: payment_status={session.payment_status}, status={session.status}, is_paid={is_paid}")
         
         logger.info(f"Payment-Status für {session_id}: {'bezahlt' if is_paid else 'nicht bezahlt'}")
 
         return {
             "session_id": session_id,
-            "payment_status": payment_intent.status,
+            "payment_status": payment_status,
             "is_paid": is_paid,
-            "amount": payment_intent.amount,
-            "currency": payment_intent.currency,
+            "amount": amount,
+            "currency": session.currency,
             "metadata": session.metadata
         }
     except Exception as e:
@@ -1060,6 +1347,7 @@ async def stripe_webhook(request: Request):
     try:
         event = stripe_service.construct_webhook_event(payload, sig_header)
         logger.info(f"✅ Stripe Webhook Event empfangen: {event['type']}")
+        logger.info(f"🔍 Event Data: {json.dumps(event, indent=2, default=str)}")
     except Exception as e:
         logger.error(f"Webhook-Fehler bei der Signaturprüfung: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -1069,7 +1357,8 @@ async def stripe_webhook(request: Request):
         session = event['data']['object']
         metadata = session.get('metadata', {})
         
-        logger.info(f"Verarbeite 'checkout.session.completed' für Session: {session.id}")
+        logger.info(f"🎯 Verarbeite 'checkout.session.completed' für Session: {session.id}")
+        logger.info(f"📋 Session Metadata: {metadata}")
         
         try:
             # Extrahiere die notwendigen Daten aus den Metadaten
@@ -1077,6 +1366,8 @@ async def stripe_webhook(request: Request):
             plan = metadata.get('plan_id', 'basic')
             user_id = metadata.get('user_id')
             max_pages = int(metadata.get('page_count', '5'))
+            
+            logger.info(f"🔍 DEBUGGING: url={url}, plan='{plan}', user_id={user_id}")
             
             # Extrahiere Upgrades aus den Metadaten
             selected_upgrades = []
@@ -1093,47 +1384,234 @@ async def stripe_webhook(request: Request):
                 logger.error(f"Webhook-Fehler: Fehlende 'website_url' oder 'user_id' in Metadaten für Session {session.id}")
                 raise HTTPException(status_code=400, detail="Metadaten unvollständig")
 
-            # Erstelle den AnalysisRequest für den asynchronen Task
-            analysis_request = AnalysisRequest(
-                url=url,
-                plan=plan,
-                max_pages=max_pages,
-                user_id=user_id
-            )
-            
-            # Starte die Analyse direkt, genau wie es /analyze-complete-async tun würde
             supabase = SupabaseService()
-            job_id = supabase.create_analysis_job(
-                url=url, 
-                plan=plan, 
-                user_id=user_id,
-                payment_session_id=session.id, # Speichere die Stripe Session ID
-                selected_upgrades=selected_upgrades # Speichere die ausgewählten Upgrades
-            )
             
-            # WICHTIG: Initialisiere Job-Status in running_analyses (genau wie in analyze-complete-async)
-            running_analyses[job_id] = {
-                "status": "running",
-                "progress": 0,
-                "message": "Analyse via Webhook gestartet...",
-                "started_at": datetime.now().isoformat(),
-                "url": url,
-                "plan": plan,
-                "user_id": user_id,
-                "payment_session_id": session.id
-            }
+            logger.info(f"🔍 PLAN CHECK: plan='{plan}', type={type(plan)}, equals_professional_fix={plan == 'professional_fix'}")
             
-            logger.info(f"Analysejob {job_id} via Webhook erstellt. Starte asynchronen Task...")
+            # WICHTIG: Unterscheidung zwischen Analyse-Käufen, Professional Fix und Certificate
+            if plan == 'professional_fix':
+                logger.info(f"🔧 ENTERING Professional Fix workflow für {url} von User {user_id}")
+                
+                # Verwende die exakte Job-ID aus den Stripe-Metadaten (beide möglichen Schlüssel prüfen)
+                original_job_id = metadata.get('original_job_id') or metadata.get('existing_job_id')
+                
+                if not original_job_id:
+                    logger.error(f"❌ Keine 'original_job_id' oder 'existing_job_id' in Stripe-Metadaten für Professional Fix gefunden")
+                    raise HTTPException(status_code=400, detail="Job-ID fehlt in Metadaten")
+                
+                logger.info(f"🔍 Professional Fix für spezifische Job-ID: {original_job_id}")
+                
+                # Hole den spezifischen Job über Job-ID
+                job_result = supabase.client.table('analysis_jobs')\
+                    .select('*')\
+                    .eq('id', original_job_id)\
+                    .eq('user_id', user_id)\
+                    .execute()
+                
+                if not job_result.data or len(job_result.data) == 0:
+                    logger.error(f"❌ Analysis Job {original_job_id} nicht gefunden oder gehört nicht User {user_id}")
+                    raise HTTPException(status_code=400, detail=f"Analysis Job {original_job_id} nicht gefunden")
+                
+                target_job = job_result.data[0]
+                logger.info(f"✅ Job gefunden: {target_job['id']} - {target_job['url']} - Status: {target_job['status']}")
+                    
+                # Erstelle upgrade_task für Professional Fix
+                try:
+                    upgrade_task_data = {
+                        'job_id': target_job['id'],
+                        'upgrade_type': 'professional_fix',
+                        'status': 'requested',
+                        'assigned_to': 'webdev',
+                        'customer_notified': False,
+                        'trigger_source': 'manual',
+                        'triggered_by_user_id': user_id,
+                        'created_at': datetime.now().isoformat()
+                    }
+                    
+                    # Prüfe ob bereits ein upgrade_task für diesen Job existiert
+                    existing_task_result = supabase.client.table('upgrade_tasks')\
+                        .select('id')\
+                        .eq('job_id', target_job['id'])\
+                        .eq('upgrade_type', 'professional_fix')\
+                        .execute()
+                    
+                    if existing_task_result.data and len(existing_task_result.data) > 0:
+                        logger.warning(f"⚠️ Upgrade Task für Job {target_job['id']} existiert bereits")
+                        task_id = existing_task_result.data[0]['id']
+                    else:
+                        # Erstelle neuen upgrade_task
+                        task_result = supabase.client.table('upgrade_tasks')\
+                            .insert(upgrade_task_data)\
+                            .execute()
+                        
+                        if task_result.data and len(task_result.data) > 0:
+                            task_id = task_result.data[0]['id']
+                            logger.info(f"✅ Upgrade Task {task_id} für Professional Fix erstellt")
+                        else:
+                            logger.error(f"❌ Fehler beim Erstellen des Upgrade Tasks: {task_result}")
+                            raise HTTPException(status_code=500, detail="Upgrade Task konnte nicht erstellt werden")
+                    
+                    # Optional: Versuche den ursprünglichen Job zu aktualisieren (nicht kritisch)
+                    try:
+                        # Nur die Session ID speichern, ohne neue Spalten
+                        result = supabase.client.table('analysis_jobs').update({
+                            'updated_at': datetime.now().isoformat()
+                        }).eq('id', target_job['id']).execute()
+                        logger.info(f"✅ Analysis Job {target_job['id']} aktualisiert")
+                    except Exception as e:
+                        logger.info(f"ℹ️ Analysis Job Update übersprungen: {e}")
+                    
+                    logger.info(f"🎯 Professional Fix Workflow erfolgreich:")
+                    logger.info(f"   📋 Task-ID: {task_id}")
+                    logger.info(f"   🔗 Job-ID: {target_job['id']}")
+                    logger.info(f"   👤 Customer: {user_id}")
+                    logger.info(f"   💳 Payment Session: {session.id}")
+                    logger.info(f"   🌐 Website: {url}")
+                    
+                    return {"status": "success", "task_id": task_id, "job_id": target_job['id'], "type": "professional_fix"}
+                    
+                except Exception as e:
+                    logger.error(f"❌ Fehler beim Erstellen des Professional Fix Upgrade Tasks: {str(e)}")
+                    raise HTTPException(status_code=500, detail=f"Professional Fix Task konnte nicht erstellt werden: {str(e)}")
+                    
+            elif plan == 'certificate_only':
+                logger.info(f"🏆 ENTERING Certificate workflow für {url} von User {user_id}")
+                
+                # DEBUG: Zeige alle Metadaten
+                logger.info(f"📋 ALLE METADATA: {json.dumps(metadata, indent=2)}")
+                
+                # Verwende die exakte Job-ID aus den Stripe-Metadaten (beide möglichen Schlüssel prüfen)
+                original_job_id = metadata.get('original_job_id') or metadata.get('existing_job_id')
+                
+                logger.info(f"🔍 Job-ID Suche: original_job_id={metadata.get('original_job_id')}, existing_job_id={metadata.get('existing_job_id')}")
+                logger.info(f"🎯 Finale Job-ID: {original_job_id}")
+                
+                if not original_job_id:
+                    logger.error(f"❌ Keine 'original_job_id' oder 'existing_job_id' in Stripe-Metadaten für Certificate gefunden")
+                    logger.error(f"❌ Vorhandene Keys in Metadata: {list(metadata.keys())}")
+                    raise HTTPException(status_code=400, detail="Job-ID fehlt in Metadaten")
+                
+                logger.info(f"🔍 Certificate für spezifische Job-ID: {original_job_id}")
+                
+                # Hole den spezifischen Job über Job-ID
+                job_result = supabase.client.table('analysis_jobs')\
+                    .select('*')\
+                    .eq('id', original_job_id)\
+                    .eq('user_id', user_id)\
+                    .execute()
+                
+                if not job_result.data or len(job_result.data) == 0:
+                    logger.error(f"❌ Analysis Job {original_job_id} nicht gefunden oder gehört nicht User {user_id}")
+                    raise HTTPException(status_code=400, detail=f"Analysis Job {original_job_id} nicht gefunden")
+                
+                target_job = job_result.data[0]
+                logger.info(f"✅ Job gefunden: {target_job['id']} - {target_job['url']} - Status: {target_job['status']}")
+                    
+                # Erstelle upgrade_task für Certificate
+                try:
+                    upgrade_task_data = {
+                        'job_id': target_job['id'],
+                        'upgrade_type': 'certificate',
+                        'status': 'requested',
+                        'assigned_to': 'certifier',
+                        'customer_notified': False,
+                        'trigger_source': 'manual',
+                        'triggered_by_user_id': user_id,
+                        'created_at': datetime.now().isoformat()
+                    }
+                    
+                    # Prüfe ob bereits ein upgrade_task für diesen Job existiert
+                    existing_task_result = supabase.client.table('upgrade_tasks')\
+                        .select('id')\
+                        .eq('job_id', target_job['id'])\
+                        .eq('upgrade_type', 'certificate')\
+                        .execute()
+                    
+                    if existing_task_result.data and len(existing_task_result.data) > 0:
+                        logger.warning(f"⚠️ Certificate Task für Job {target_job['id']} existiert bereits")
+                        task_id = existing_task_result.data[0]['id']
+                    else:
+                        # Erstelle neuen upgrade_task
+                        task_result = supabase.client.table('upgrade_tasks')\
+                            .insert(upgrade_task_data)\
+                            .execute()
+                        
+                        if task_result.data and len(task_result.data) > 0:
+                            task_id = task_result.data[0]['id']
+                            logger.info(f"✅ Upgrade Task {task_id} für Certificate erstellt")
+                        else:
+                            logger.error(f"❌ Fehler beim Erstellen des Certificate Tasks: {task_result}")
+                            raise HTTPException(status_code=500, detail="Certificate Task konnte nicht erstellt werden")
+                    
+                    # Optional: Versuche den ursprünglichen Job zu aktualisieren (nicht kritisch)
+                    try:
+                        # Nur die Session ID speichern, ohne neue Spalten
+                        result = supabase.client.table('analysis_jobs').update({
+                            'updated_at': datetime.now().isoformat()
+                        }).eq('id', target_job['id']).execute()
+                        logger.info(f"✅ Analysis Job {target_job['id']} aktualisiert")
+                    except Exception as e:
+                        logger.info(f"ℹ️ Analysis Job Update übersprungen: {e}")
+                    
+                    logger.info(f"🎯 Certificate Workflow erfolgreich:")
+                    logger.info(f"   📋 Task-ID: {task_id}")
+                    logger.info(f"   🔗 Job-ID: {target_job['id']}")
+                    logger.info(f"   👤 Customer: {user_id}")
+                    logger.info(f"   💳 Payment Session: {session.id}")
+                    logger.info(f"   🌐 Website: {url}")
+                    
+                    return {"status": "success", "task_id": task_id, "job_id": target_job['id'], "type": "certificate"}
+                    
+                except Exception as e:
+                    logger.error(f"❌ Fehler beim Erstellen des Certificate Upgrade Tasks: {str(e)}")
+                    raise HTTPException(status_code=500, detail=f"Certificate Task konnte nicht erstellt werden: {str(e)}")
+                    
+            else:
+                logger.info(f"📊 Standard Analyse gekauft: Plan {plan} für {url} von User {user_id}")
+                
+                # Erstelle den AnalysisRequest für den asynchronen Task
+                analysis_request = AnalysisRequest(
+                    url=url,
+                    plan=plan,
+                    max_pages=max_pages,
+                    user_id=user_id
+                )
+                
+                # Starte die Analyse direkt, genau wie es /analyze-complete-async tun würde
+                job_id = supabase.create_analysis_job(
+                    url=url, 
+                    plan=plan, 
+                    user_id=user_id,
+                    payment_session_id=session.id, # Speichere die Stripe Session ID
+                    selected_upgrades=selected_upgrades # Speichere die ausgewählten Upgrades
+                )
+                
+                # WICHTIG: Initialisiere Job-Status in running_analyses (genau wie in analyze-complete-async)
+                running_analyses[job_id] = {
+                    "status": "running",
+                    "progress": 0,
+                    "message": "Analyse via Webhook gestartet...",
+                    "started_at": datetime.now().isoformat(),
+                    "url": url,
+                    "plan": plan,
+                    "user_id": user_id,
+                    "payment_session_id": session.id
+                }
+                
+                logger.info(f"Analysejob {job_id} via Webhook erstellt. Starte asynchronen Task...")
 
-            asyncio.create_task(run_analysis_async(job_id, analysis_request))
-            
-            logger.info(f"✅ Analyse für Job {job_id} erfolgreich via Webhook gestartet.")
-            return {"status": "success", "job_id": job_id}
+                asyncio.create_task(run_analysis_async(job_id, analysis_request))
+                
+                logger.info(f"✅ Analyse für Job {job_id} erfolgreich via Webhook gestartet.")
+                return {"status": "success", "job_id": job_id, "type": "analysis"}
 
         except Exception as e:
             logger.error(f"Fehler bei der Verarbeitung des Webhooks und Start der Analyse: {e}")
             # Einen Fehler an Stripe zurückgeben, damit der Webhook erneut versucht wird
             raise HTTPException(status_code=500, detail=f"Webhook-Verarbeitung fehlgeschlagen: {e}")
+    else:
+        logger.info(f"⏭️ Überspringe Event Type: {event['type']} (erwarten checkout.session.completed)")
+        return {"status": "event received but not processed"}
             
     return {"status": "event received"}
 
@@ -1181,7 +1659,7 @@ async def count_pages_api(request: PageCountRequest):
 if __name__ == "__main__":
     logger.info("Starte Server")
     try:
-        uvicorn.run("main:app", host="0.0.0.0", port=8003, reload=True)
+        uvicorn.run("main:app", host=config.BACKEND_HOST, port=config.BACKEND_PORT, reload=True)
     except Exception as e:
         logger.error(f"Fehler beim Serverstart: {str(e)}")
         sys.exit(1) 

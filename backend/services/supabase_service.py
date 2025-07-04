@@ -6,11 +6,15 @@ from datetime import datetime
 import json
 import uuid
 import traceback
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
 class SupabaseService:
     def __init__(self):
+        # Explizit .env laden um sicherzustellen dass Variablen verfügbar sind
+        load_dotenv()
+        
         # Lade Umgebungsvariablen
         supabase_url = os.getenv('SUPABASE_URL')
         supabase_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')

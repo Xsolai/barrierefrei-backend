@@ -12,6 +12,11 @@ import json
 import re
 import html
 import os
+import sys
+
+# Füge das parent directory zum Python path hinzu, um config zu importieren
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import config
 
 # Importiere das neue Scoring-System
 try:
@@ -213,7 +218,7 @@ class PDFReportGenerator:
         
         footer_data = [
             [
-                Paragraph("BarrierefreiCheck by EcomTask UG<br/>support@inclusa.de", contact_style),
+                Paragraph(f"BarrierefreiCheck by {config.COMPANY_NAME}<br/>{config.SUPPORT_EMAIL}", contact_style),
                 Paragraph("Automatisierte WCAG-Analyse<br/>Erstellt mit KI-Technologie", footer_style),
                 Paragraph(f"Erstellt am<br/>{datetime.now().strftime('%d.%m.%Y %H:%M')}", date_style)
             ]

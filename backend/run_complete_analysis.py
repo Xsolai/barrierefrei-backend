@@ -6,6 +6,7 @@ Automatische Analyse aller WCAG-Bereiche mit ChatGPT-4
 
 import logging
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -703,9 +704,9 @@ class CompleteWCAGAnalyzer:
 def main():
     """Hauptfunktion für vollständige WCAG-Analyse"""
     
-    # Konfiguration
-    target_url = "https://ecomtask.de"
-    max_pages = 5
+    # Konfiguration - kann über ENV-Variable überschrieben werden
+    target_url = os.getenv("TEST_TARGET_URL", "https://ecomtask.de")
+    max_pages = int(os.getenv("TEST_MAX_PAGES", "5"))
     
     logger.info("🚀 Starte vollständige WCAG-Barrierefreiheits-Analyse")
     logger.info(f"🎯 Ziel-URL: {target_url}")

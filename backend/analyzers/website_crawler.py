@@ -9,6 +9,12 @@ import requests
 import json
 import time
 import traceback
+import sys
+import os
+
+# Füge das parent directory zum Python path hinzu, um config zu importieren
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +50,7 @@ class WebsiteCrawler:
         try:
             self.logger.info(f"Starte Extraktion von {url}")
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                'User-Agent': f'Mozilla/5.0 (compatible; BarrierefreiCheck/1.0; +{config.COMPANY_WEBSITE})'
             }
             response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
@@ -1718,7 +1724,7 @@ class WebsiteCrawler:
         for sitemap_url in sitemap_urls:
             try:
                 response = requests.get(sitemap_url, timeout=10, headers={
-                    'User-Agent': 'Mozilla/5.0 (compatible; BarrierefreiCheck/1.0; +https://barrierefreicheck.de)'
+                    'User-Agent': f'Mozilla/5.0 (compatible; BarrierefreiCheck/1.0; +{config.COMPANY_WEBSITE})'
                 })
                 
                 if response.status_code == 200:
@@ -1827,7 +1833,7 @@ class WebsiteCrawler:
                 
             try:
                 response = requests.get(current_url, timeout=10, headers={
-                    'User-Agent': 'Mozilla/5.0 (compatible; BarrierefreiCheck/1.0)'
+                    'User-Agent': f'Mozilla/5.0 (compatible; BarrierefreiCheck/1.0; +{config.COMPANY_WEBSITE})'
                 })
                 
                 if response.status_code == 200:

@@ -6,6 +6,10 @@ Zentrale Konfigurationsdatei für Pfade und Einstellungen
 
 from pathlib import Path
 import os
+from dotenv import load_dotenv
+
+# Lade .env Datei
+load_dotenv()
 
 # Basis-Verzeichnisse
 BASE_DIR = Path(__file__).parent
@@ -15,9 +19,13 @@ RESOURCES_DIR = BASE_DIR / "resources"
 EXPERT_PROMPTS_DIR = RESOURCES_DIR / "expert_prompts"
 GENERATED_PROMPTS_DIR = EXPERT_PROMPTS_DIR / "generated_prompts"
 
-# URL-Konfiguration
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://inclusa.de')
-BACKEND_URL = os.getenv('BACKEND_URL', 'http://18.184.65.167:8003')
+# URL-Konfiguration - Verwende immer lokale Entwicklungseinstellungen als Fallback
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8003')
+
+# Backend Server Konfiguration
+BACKEND_HOST = os.getenv('BACKEND_HOST', '0.0.0.0')
+BACKEND_PORT = int(os.getenv('BACKEND_PORT', '8003'))
 
 # Payment URLs für Stripe Redirects
 FRONTEND_BASE_URL = os.getenv('FRONTEND_BASE_URL', 'http://localhost:3000')
@@ -36,6 +44,11 @@ OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.0"))  # 0.0 für K
 
 # NEU: Context Window für 1 Million Token Support!
 OPENAI_MAX_CONTEXT_TOKENS = int(os.getenv("OPENAI_MAX_CONTEXT_TOKENS", "1000000"))  # 1 MILLION!
+
+# Company/Contact Information
+COMPANY_NAME = os.getenv('COMPANY_NAME', 'EcomTask UG')
+SUPPORT_EMAIL = os.getenv('SUPPORT_EMAIL', 'support@inclusa.de')
+COMPANY_WEBSITE = os.getenv('COMPANY_WEBSITE', 'https://inclusa.de')
 
 # Logging
 LOG_FILE = BASE_DIR / "backend.log"
