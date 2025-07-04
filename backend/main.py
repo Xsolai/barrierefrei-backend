@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException, Header, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -63,21 +62,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="BarrierefreiCheck API", lifespan=lifespan)
 
 # CORS-Konfiguration
-app.add_middleware(
-    CORSMiddleware,
-        allow_origins=[
-        config.FRONTEND_URL,      # Primäre Frontend URL aus ENV
-        config.BACKEND_URL,       # Backend URL aus ENV  
-        "http://localhost:3000",  # Für lokale Entwicklung
-        "http://localhost:3001",  # Für lokale Entwicklung (alternativer Port)
-        "http://localhost:3002",  # Für lokale Entwicklung (alternativer Port)
-        "http://localhost:8080",  # Für lokale Entwicklung
-        # Production URLs werden jetzt über ENV-Variablen gesteuert (FRONTEND_URL)
-    ],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-)
+# CORS wird über nginx konfiguriert - kein CORS-Middleware im Backend nötig
+# app.add_middleware(CORSMiddleware, ...) - entfernt, da nginx das übernimmt
 
 class AnalysisRequest(BaseModel):
     url: str
